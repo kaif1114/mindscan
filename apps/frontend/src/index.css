@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+  @apply bg-gray-50 text-gray-900;
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-lg;
+  }
+
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+
+  .btn-secondary {
+    @apply bg-secondary-600 text-white hover:bg-secondary-700 focus:ring-secondary-500;
+  }
+
+  .btn-accent {
+    @apply bg-accent-500 text-white hover:bg-accent-600 focus:ring-accent-400;
+  }
+
+  .btn-outline {
+    @apply border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-500;
+  }
+
+  .input {
+    @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  }
+
+  .card {
+    @apply bg-white rounded-xl shadow-md p-4 transition-all duration-200;
+  }
+
+  .card-hover {
+    @apply hover:shadow-lg;
+  }
+
+  .neumorph {
+    @apply bg-gray-100 shadow-neumorph rounded-xl;
+  }
+
+  .neumorph-inset {
+    @apply bg-gray-100 shadow-neumorph-inset rounded-xl;
+  }
+}
+
+.chat-bubble {
+  @apply px-4 py-3 rounded-2xl max-w-[80%];
+}
+
+.chat-bubble-user {
+  @apply bg-primary-600 text-white ml-auto;
+}
+
+.chat-bubble-ai {
+  @apply bg-gray-200 text-gray-800;
+}
+
+.sidebar-item {
+  @apply flex items-center p-3 rounded-lg transition-all duration-200 hover:bg-gray-100;
+}
+
+.sidebar-item.active {
+  @apply bg-primary-50 text-primary-700;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
