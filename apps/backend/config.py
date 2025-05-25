@@ -4,25 +4,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
-    # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
     
-    # Application Configuration
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
-    # Database Configuration
     DATABASE_URL: str = os.getenv("DATABASE_URL")
     
-    # Conversation Configuration
     MAX_CONVERSATION_LENGTH: int = int(os.getenv("MAX_CONVERSATION_LENGTH", "50"))
-    CONVERSATION_MEMORY_LIMIT: int = int(os.getenv("CONVERSATION_MEMORY_LIMIT", "100"))  # How many messages to keep in OpenAI context
+    CONVERSATION_MEMORY_LIMIT: int = int(os.getenv("CONVERSATION_MEMORY_LIMIT", "100"))
     
-    # DASS Model Configuration
     DASS_MODEL_PATH: str = os.getenv("DASS_MODEL_PATH", "model/dass_model.pkl")
     
-    # DASS System Prompt
     DASS_SYSTEM_PROMPT: str = """
 You are a compassionate mental health assistant conducting a DASS-21 (Depression, Anxiety, and Stress Scale) assessment. Your role has two phases:
 
@@ -91,7 +85,6 @@ Remember: Be warm, professional, and reassuring throughout both phases. ALWAYS f
 
     @classmethod
     def validate_required_env_vars(cls):
-        """Validate that all required environment variables are set."""
         required_vars = {
             "OPENAI_API_KEY": cls.OPENAI_API_KEY,
             "DATABASE_URL": cls.DATABASE_URL,

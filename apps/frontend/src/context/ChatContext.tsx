@@ -168,25 +168,21 @@ const formatDASSToPrediction = (prediction: DASSPrediction) => {
 const convertRawPredictionToDASSPrediction = (
   rawPrediction: any
 ): DASSPrediction => {
-  // Convert raw prediction data from backend to DASSPrediction format
   if (!rawPrediction || !rawPrediction.predictions) {
     throw new Error("Invalid prediction data");
   }
 
   const predictions = rawPrediction.predictions;
 
-  // Calculate scores (category_index * 7 for DASS-21 scaling)
   const depressionScore = (predictions.Depression?.category_index || 0) * 7;
   const anxietyScore = (predictions.Anxiety?.category_index || 0) * 7;
   const stressScore = (predictions.Stress?.category_index || 0) * 7;
 
-  // Determine if there's a disorder (any score above normal)
   const hasDisorder =
     predictions.Depression?.severity !== "Normal" ||
     predictions.Anxiety?.severity !== "Normal" ||
     predictions.Stress?.severity !== "Normal";
 
-  // Determine primary disorder type
   let disorderType = null;
   if (hasDisorder) {
     const scores = [
@@ -215,8 +211,8 @@ const convertRawPredictionToDASSPrediction = (
   }
 
   return {
-    id: `pred-${Date.now()}`, // Generate a temporary ID
-    conversation_id: "", // Will be set by caller
+    id: `pred-${Date.now()}`,
+    conversation_id: "",
     depression_score: depressionScore,
     anxiety_score: anxietyScore,
     stress_score: stressScore,
@@ -225,7 +221,7 @@ const convertRawPredictionToDASSPrediction = (
     stress_level: predictions.Stress?.severity || "Normal",
     has_disorder: hasDisorder,
     disorder_type: disorderType,
-    confidence: rawPrediction.model_info?.accuracy || 0.8, // Use model accuracy as confidence
+    confidence: rawPrediction.model_info?.accuracy || 0.8,
     model_version: rawPrediction.model_info?.model_type || "unknown",
     created_at: new Date().toISOString(),
   };
@@ -234,12 +230,10 @@ const convertRawPredictionToDASSPrediction = (
 const convertSimplifiedPredictionToDASSPrediction = (
   simplifiedPrediction: any
 ): DASSPrediction => {
-  // Convert simplified prediction format from get_conversation_with_responses
   if (!simplifiedPrediction) {
     throw new Error("Invalid prediction data");
   }
 
-  // Map severity levels to approximate scores
   const severityToScore = {
     Normal: 0,
     Mild: 7,
@@ -261,13 +255,11 @@ const convertSimplifiedPredictionToDASSPrediction = (
       simplifiedPrediction.stress?.severity as keyof typeof severityToScore
     ] || 0;
 
-  // Determine if there's a disorder (any score above normal)
   const hasDisorder =
     simplifiedPrediction.depression?.severity !== "Normal" ||
     simplifiedPrediction.anxiety?.severity !== "Normal" ||
     simplifiedPrediction.stress?.severity !== "Normal";
 
-  // Determine primary disorder type
   let disorderType = null;
   if (hasDisorder) {
     const scores = [
@@ -296,8 +288,8 @@ const convertSimplifiedPredictionToDASSPrediction = (
   }
 
   return {
-    id: `pred-${Date.now()}`, // Generate a temporary ID
-    conversation_id: "", // Will be set by caller
+    id: `pred-${Date.now()}`,
+    conversation_id: "",
     depression_score: depressionScore,
     anxiety_score: anxietyScore,
     stress_score: stressScore,
@@ -306,7 +298,7 @@ const convertSimplifiedPredictionToDASSPrediction = (
     stress_level: simplifiedPrediction.stress?.severity || "Normal",
     has_disorder: hasDisorder,
     disorder_type: disorderType,
-    confidence: 0.8, // Default confidence since we don't have model info
+    confidence: 0.8,
     model_version: "unknown",
     created_at: simplifiedPrediction.timestamp || new Date().toISOString(),
   };
@@ -342,32 +334,26 @@ const convertFullConversationToSession = (
       ? messages[messages.length - 1].content
       : "New conversation";
 
-  // Get the latest prediction if available
-  // Handle both single prediction object and array of predictions
   let latestPrediction: DASSPrediction | null = null;
 
   if (data.predictions) {
     try {
       if (Array.isArray(data.predictions)) {
-        // Array format - use the last prediction
         if (data.predictions.length > 0) {
           const lastPred = data.predictions[data.predictions.length - 1];
           latestPrediction = lastPred;
         }
       } else {
-        // Check if it's the simplified format from get_conversation_with_responses
         const predictions = data.predictions as any;
         if (
           predictions.depression &&
           predictions.anxiety &&
           predictions.stress
         ) {
-          // Simplified format
           latestPrediction =
             convertSimplifiedPredictionToDASSPrediction(predictions);
           latestPrediction.conversation_id = data.conversation.id;
         } else {
-          // Raw prediction format
           latestPrediction = convertRawPredictionToDASSPrediction(predictions);
           latestPrediction.conversation_id = data.conversation.id;
         }
@@ -404,7 +390,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // Fetch conversations list for sidebar
   const {
     data: conversationsListData,
     isLoading: isConversationsListLoading,
@@ -415,7 +400,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
   const continueConversationMutation = useContinueConversation();
   const deleteConversationMutation = useDeleteConversation();
 
-  // Only use this hook when we need to load a specific session from backend
   const {
     data: conversationData,
     isLoading: isConversationLoading,
@@ -428,17 +412,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
     deleteConversationMutation.isPending ||
     isConversationLoading;
 
-  // Convert API conversation summaries to ChatSessions for UI
   const sessions: ChatSession[] = React.useMemo(() => {
     if (!conversationsListData?.conversations) return [];
 
     return conversationsListData.conversations.map(
       (summary: ConversationSummary) => {
-        // Check if we have local data for this conversation
         const localSession = localSessions.get(summary.id);
 
         if (localSession) {
-          // Use local data but update metadata from API
           return {
             ...localSession,
             lastMessage: summary.last_message,
@@ -446,13 +427,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
           };
         }
 
-        // Create session from API summary
         return {
           id: summary.id,
           title: summary.title,
           lastMessage: summary.last_message,
           timestamp: new Date(summary.last_message_timestamp),
-          messages: [], // Will be loaded when needed
+          messages: [],
           analysis: summary.has_predictions
             ? {
                 hasDisorder: false,
@@ -466,22 +446,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
     );
   }, [conversationsListData, localSessions]);
 
-  // Handle loaded conversation data
   React.useEffect(() => {
     if (conversationData && loadingSessionId) {
       try {
         const updatedSession =
           convertFullConversationToSession(conversationData);
 
-        // Store in local sessions map
         setLocalSessions(
           (prev) => new Map(prev.set(updatedSession.id, updatedSession))
         );
 
-        // Set as current session
         setCurrentSession(updatedSession);
 
-        // Clear loading state
         setLoadingSessionId(null);
       } catch (error) {
         console.error("Error converting conversation data:", error);
@@ -491,7 +467,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [conversationData, loadingSessionId]);
 
-  // Handle errors
   React.useEffect(() => {
     if (createConversationMutation.error) {
       setError(createConversationMutation.error.message);
@@ -522,7 +497,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
         initial_message: initialMessage,
       });
 
-      // Create session with initial messages
       const newSession: ChatSession = {
         id: response.conversation_id,
         title: `New Chat`,
@@ -557,7 +531,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       setError(null);
 
-      // Add user message to local state immediately
       const userMessage: Message = {
         id: `user-${Date.now()}`,
         content,
@@ -565,7 +538,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
         timestamp: new Date(),
       };
 
-      // Update local state with user message
       const updatedSession = {
         ...currentSession,
         messages: [...currentSession.messages, userMessage],
@@ -578,13 +550,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
         (prev) => new Map(prev.set(currentSession.id, updatedSession))
       );
 
-      // Send to backend
       const response = await continueConversationMutation.mutateAsync({
         conversation_id: currentSession.id,
         message: content,
       });
 
-      // Add AI response to local state
       const aiMessage: Message = {
         id: `ai-${Date.now()}`,
         content: response.message,
@@ -599,16 +569,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
         timestamp: new Date(),
       };
 
-      // If assessment is complete and we have predictions, add analysis
       if (response.is_assessment_complete && response.predictions) {
         const dassPrediction = convertRawPredictionToDASSPrediction(
           response.predictions
         );
         dassPrediction.conversation_id = currentSession.id;
         finalSession.analysis = formatDASSToPrediction(dassPrediction);
-      }
-      // If session already had analysis, preserve it
-      else if (currentSession.analysis) {
+      } else if (currentSession.analysis) {
         finalSession.analysis = currentSession.analysis;
       }
 
@@ -616,21 +583,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
       setLocalSessions(
         (prev) => new Map(prev.set(currentSession.id, finalSession))
       );
-
-      // Don't automatically navigate to results - let user continue conversation
-      // Users can view results by clicking the results button in the sidebar
     } catch (error) {
       console.error("Failed to send message:", error);
     }
   };
 
   const selectSession = (sessionId: string) => {
-    // Check if we have the session with messages in local cache
     const localSession = localSessions.get(sessionId);
     if (localSession && localSession.messages.length > 0) {
       setCurrentSession(localSession);
     } else {
-      // Load session from backend if not in local cache or no messages
       loadSession(sessionId);
     }
   };

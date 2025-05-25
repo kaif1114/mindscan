@@ -17,11 +17,9 @@ from models import (
 from services.conversation_service import conversation_service
 from src.dass_prediction_service import dass_service
 
-# Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
-# Create FastAPI app
 app = FastAPI(
     title="DASS Mental Health Assessment API",
     description="Conversational DASS-21 mental health assessment with OpenAI integration and PostgreSQL persistence",
@@ -30,10 +28,9 @@ app = FastAPI(
     redoc_url="/api/redoc"
 )
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -41,7 +38,6 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables on startup."""
     try:
         create_tables()
         logger.info("Database tables initialized successfully")
@@ -51,7 +47,6 @@ async def startup_event():
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint with API information."""
     return {
         "message": "DASS Mental Health Assessment API",
         "version": "2.1.0",
@@ -67,13 +62,10 @@ async def root():
 
 @app.get("/api/health", response_model=HealthCheckResponse)
 async def health_check():
-    """Health check endpoint to verify all services are operational."""
     try:
-        # Test DASS service
         test_data = {f"Q{i}A": 2 for i in range(1, 22)}
         result = dass_service.predict(test_data)
         
-        # Test database connection
         from database import SessionLocal
         db = SessionLocal()
         try:
@@ -113,7 +105,6 @@ async def health_check():
 
 @app.get("/api/model/info", response_model=ModelInfoResponse)
 async def get_model_info():
-    """Get information about the DASS model."""
     try:
         return ModelInfoResponse(
             status="success",
@@ -138,9 +129,7 @@ async def get_model_info():
 
 @app.post("/api/conversations/new", response_model=NewConversationResponse)
 async def create_new_conversation(request: NewConversationRequest, req: Request):
-    """Start a new DASS assessment conversation."""
     try:
-        # Extract client info for analytics
         user_ip = req.client.host if req.client else None
         user_agent = req.headers.get("user-agent")
         
@@ -160,7 +149,6 @@ async def create_new_conversation(request: NewConversationRequest, req: Request)
 
 @app.post("/api/conversations/continue", response_model=ConversationResponse)
 async def continue_conversation(request: ConversationRequest):
-    """Continue an existing conversation."""
     try:
         if not request.conversation_id:
             raise HTTPException(status_code=400, detail="conversation_id is required")
@@ -184,7 +172,6 @@ async def continue_conversation(request: ConversationRequest):
 
 @app.get("/api/conversations", response_model=ConversationsListResponse)
 async def get_conversations_list(limit: int = 50, offset: int = 0):
-    """Get list of conversations with summary info (without messages) for sidebar."""
     try:
         conversations = conversation_service.get_conversations_list(limit=limit, offset=offset)
         return ConversationsListResponse(
@@ -262,11 +249,11 @@ async def predict_dass(request: DASSPredictionRequest):
                     detail=f"Missing response for {question_id}"
                 )
         
-        # Add timestamp
+     
         prediction_data = request.responses.copy()
         prediction_data['timestamp'] = datetime.now().isoformat()
         
-        # Make prediction
+    
         result = dass_service.predict(prediction_data)
         
         if result['status'] == 'success':
@@ -309,11 +296,11 @@ async def predict_dass_detailed(request: DASSPredictionRequest):
                     detail=f"Missing response for {question_id}"
                 )
         
-        # Add timestamp
+        
         prediction_data = request.responses.copy()
         prediction_data['timestamp'] = datetime.now().isoformat()
         
-        # Make detailed prediction
+     
         result = dass_service.predict_with_probabilities(prediction_data)
         
         if result['status'] == 'success':
@@ -353,7 +340,7 @@ async def get_dass_questions():
         logger.error(f"Error getting DASS questions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Error handlers
+
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
     return JSONResponse(
@@ -388,29 +375,9 @@ async def internal_error_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
     
-    print("🚀 Starting DASS Mental Health Assessment API v2.1")
-    print("   Features:")
-    print("     ✅ Conversational DASS assessment with OpenAI")
-    print("     ✅ PostgreSQL persistent storage")
-    print("     ✅ Conversation memory management")
-    print("     ✅ Direct DASS prediction endpoints")
-    print("     ✅ Tool calling for automatic predictions")
-    print("     ✅ Analytics and reporting")
-    print(f"     ✅ DASS Model: {dass_service.metadata['accuracy']:.2%} accuracy")
-    print("   Available endpoints:")
-    print("     GET  /api/health - Health check")
-    print("     GET  /api/model/info - Model information")
-    print("     POST /api/conversations/new - Start new conversation")
-    print("     POST /api/conversations/continue - Continue conversation")
-    print("     GET  /api/conversations/{id} - Get conversation history")
-    print("     GET  /api/conversations/{id}/full - Get full conversation data")
-    print("     DELETE /api/conversations/{id} - Delete conversation")
-    print("     GET  /api/analytics - Get conversation analytics")
-    print("     POST /api/predict/dass - Direct DASS prediction")
-    print("     POST /api/predict/dass/detailed - Detailed DASS prediction")
-    print("     GET  /api/dass/questions - Get DASS questions")
-    print("     GET  /api/docs - API documentation")
-    print()
+  
+  
+  
     
     uvicorn.run(
         "main:app",

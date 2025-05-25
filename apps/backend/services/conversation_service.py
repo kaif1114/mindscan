@@ -24,10 +24,8 @@ class ConversationService:
         )
         
     def create_conversation(self, initial_message: str = None, user_ip: str = None, user_agent: str = None) -> Tuple[str, str]:
-        """Create a new conversation and return conversation_id and initial response."""
         db = SessionLocal()
         try:
-            # Create conversation record
             conversation = Conversation(
                 user_ip=user_ip,
                 user_agent=user_agent
@@ -38,7 +36,6 @@ class ConversationService:
             
             conversation_id = str(conversation.id)
             
-            # Add system message
             system_message = Message(
                 conversation_id=conversation.id,
                 role="system",
@@ -46,7 +43,6 @@ class ConversationService:
             )
             db.add(system_message)
             
-            # Add user's initial message if provided
             if initial_message:
                 user_message = Message(
                     conversation_id=conversation.id,
@@ -56,23 +52,16 @@ class ConversationService:
                 db.add(user_message)
             
             db.commit()
-            
-            # Get initial assistant response
             response = self._get_assistant_response(conversation_id, db)
-            
             return conversation_id, response
             
         finally:
             db.close()
     
     def continue_conversation(self, conversation_id: str, user_message: str) -> Tuple[str, bool, Optional[Dict[str, Any]]]:
-        """
-        Continue an existing conversation.
-        Returns: (assistant_response, is_complete, predictions)
-        """
+        """Continue conversation and return (response, is_complete, predictions)"""
         db = SessionLocal()
         try:
-            # Verify conversation exists
             conversation = db.query(Conversation).filter(
                 Conversation.id == conversation_id
             ).first()
@@ -80,7 +69,6 @@ class ConversationService:
             if not conversation:
                 raise ValueError("Conversation not found")
             
-            # Add user message
             user_msg = Message(
                 conversation_id=conversation.id,
                 role="user",
@@ -90,37 +78,28 @@ class ConversationService:
             db.commit()
             db.refresh(user_msg)
             
-            # Extract any DASS responses from the user message
             self._extract_and_store_dass_responses(conversation_id, user_message, user_msg.id, db)
             
-            # Check if assessment is complete
             is_complete = self._is_assessment_complete(conversation_id, db)
             predictions = None
             
-            # Check if we already have predictions (assessment was previously completed)
             existing_prediction = db.query(Prediction).filter(
                 Prediction.conversation_id == conversation_id
             ).first()
             
             if existing_prediction:
-                # Assessment was already completed, continue conversation with context
                 predictions = existing_prediction.raw_prediction_data
                 response = self._get_assistant_response(conversation_id, db)
                 
             elif is_complete:
-                # Assessment just completed - make prediction
                 try:
                     predictions = self._make_dass_prediction(conversation_id, db)
                     
-                    # Mark conversation as completed but don't end it
                     conversation.is_completed = True
                     conversation.updated_at = datetime.utcnow()
                     db.commit()
                     
-                    # Update analytics
                     self._update_conversation_analytics(conversation_id, db)
-                    
-                    # Let the AI generate a natural response with the assessment results context
                     response = self._get_assistant_response(conversation_id, db)
                     
                 except Exception as e:
@@ -132,7 +111,6 @@ class ConversationService:
                     )
                     db.add(assistant_msg)
             else:
-                # Continue assessment
                 response = self._get_assistant_response(conversation_id, db)
             
             db.commit()
@@ -144,16 +122,12 @@ class ConversationService:
     def _get_assistant_response(self, conversation_id: str, db: Session) -> str:
         """Get response from OpenAI assistant with conversation memory and tool calling support."""
         try:
-            # Get conversation messages with memory limit (following OpenAI best practices)
             messages = self._get_conversation_context(conversation_id, db)
             
-            # Check if assessment is already completed
             existing_prediction = db.query(Prediction).filter(
                 Prediction.conversation_id == conversation_id
             ).first()
             
-            # Only add system context if this is the first message after completion
-            # Check if the last assistant message already acknowledged the completion
             last_assistant_message = db.query(Message).filter(
                 Message.conversation_id == conversation_id,
                 Message.role == "assistant"
@@ -161,7 +135,6 @@ class ConversationService:
             
             completion_already_acknowledged = False
             if last_assistant_message and existing_prediction:
-                # Check if the last message already mentioned assessment completion
                 completion_keywords = ["assessment", "completed", "results", "dass"]
                 completion_already_acknowledged = any(
                     keyword in last_assistant_message.content.lower() 
@@ -169,23 +142,19 @@ class ConversationService:
                 )
             
             if existing_prediction and not completion_already_acknowledged:
-                # First time acknowledging completion - add context
                 results_context = self._format_results_context(existing_prediction)
                 messages.append({
                     "role": "system",
                     "content": f"The user has completed their DASS-21 assessment. Results: {results_context}. You are now in post-assessment therapeutic conversation mode. Respond naturally to the user's messages and engage in supportive dialogue about their mental health."
                 })
             elif not existing_prediction:
-                # Still in assessment phase - add progress info
                 progress_info = self._get_progress_info(conversation_id, db)
                 if progress_info:
-                    # Insert progress info right after system message for maximum visibility
                     messages.insert(1, {
                         "role": "system",
                         "content": f"🔍 CRITICAL TRACKING INFO: {progress_info}"
                     })
             
-            # Define tool for making DASS predictions (only during assessment phase)
             tools = []
             if not existing_prediction:
                 tools = [
@@ -214,7 +183,6 @@ class ConversationService:
                 ]
 
             try:
-                # Use tools only if we're still in assessment phase
                 if tools:
                     response = self.client.chat.completions.create(
                         model=settings.OPENAI_MODEL,
@@ -225,7 +193,6 @@ class ConversationService:
                         temperature=0.7
                     )
                 else:
-                    # Post-assessment: no tools, just natural conversation
                     response = self.client.chat.completions.create(
                         model=settings.OPENAI_MODEL,
                         messages=messages,
@@ -235,7 +202,6 @@ class ConversationService:
                 
             except Exception as e:
                 if "429" in str(e) or "rate_limit" in str(e).lower():
-                    # Rate limit hit - return friendly message
                     error_response = "I'm temporarily experiencing high demand. Please try again in a few moments."
                     assistant_msg = Message(
                         conversation_id=conversation_id,
@@ -249,7 +215,6 @@ class ConversationService:
             
             token_count = response.usage.total_tokens if response.usage else None
         
-            # Handle tool calls (only during assessment phase)
             choice = response.choices[0]
             if choice.message.tool_calls:
                 for tool_call in choice.message.tool_calls:
@@ -259,16 +224,12 @@ class ConversationService:
                             predictions = self._make_dass_prediction_from_args(
                                 conversation_id, args["responses"], db
                             )
-                            # Let the AI generate a natural response after making the prediction
-                            # We'll make another call to get the AI's response with the new context
                             assistant_response = self._get_natural_completion_response(conversation_id, db)
                         except Exception as e:
                             assistant_response = f"I've collected your responses, but encountered an issue processing the assessment: {str(e)}"
             else:
-                # Regular response
                 assistant_response = choice.message.content
             
-            # Store assistant response
             assistant_msg = Message(
                 conversation_id=conversation_id,
                 role="assistant",
@@ -282,7 +243,6 @@ class ConversationService:
         except Exception as e:
             error_response = "I apologize, but I'm having trouble responding right now. Please try again in a moment."
             
-            # Store error response
             assistant_msg = Message(
                 conversation_id=conversation_id,
                 role="assistant",
@@ -295,16 +255,13 @@ class ConversationService:
     def _get_natural_completion_response(self, conversation_id: str, db: Session) -> str:
         """Get a natural AI response after assessment completion."""
         try:
-            # Get conversation context including the new prediction
             messages = self._get_conversation_context(conversation_id, db)
             
-            # Add a simple context about just completing the assessment
             messages.append({
                 "role": "system",
                 "content": "The user has just completed their DASS-21 assessment. Provide a natural, empathetic response acknowledging the completion and offering to discuss the results. Be supportive and encourage ongoing conversation."
             })
             
-            # Make a simple completion call without tools
             response = self.client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=messages,
@@ -313,23 +270,17 @@ class ConversationService:
             )
             
             assistant_response = response.choices[0].message.content
-            
             return assistant_response
             
         except Exception as e:
             return "Thank you for completing the assessment. I'm here to discuss your results and provide support. How are you feeling about what we've covered?"
     
     def _get_conversation_context(self, conversation_id: str, db: Session) -> List[Dict[str, str]]:
-        """
-        Get conversation context for OpenAI API, implementing memory management.
-        Following OpenAI best practices for conversation memory.
-        """
-        # Get recent messages with limit to manage token usage
+        """Get conversation context for OpenAI API, implementing memory management."""
         messages = db.query(Message).filter(
             Message.conversation_id == conversation_id
         ).order_by(Message.timestamp).limit(settings.CONVERSATION_MEMORY_LIMIT).all()
         
-        # Always include system message
         formatted_messages = []
         system_message = None
         
@@ -345,12 +296,10 @@ class ConversationService:
                     "content": msg.content
                 })
         
-        # Ensure system message is first
         result = []
         if system_message:
             result.append(system_message)
         
-        # Add context summary if we're hitting memory limits
         if len(formatted_messages) >= settings.CONVERSATION_MEMORY_LIMIT - 5:
             context_summary = self._create_context_summary(conversation_id, db)
             if context_summary:
@@ -364,7 +313,6 @@ class ConversationService:
     
     def _create_context_summary(self, conversation_id: str, db: Session) -> str:
         """Create a summary of previous conversation context."""
-        # Get collected responses so far
         responses = db.query(DASSResponse).filter(
             DASSResponse.conversation_id == conversation_id
         ).all()
@@ -380,15 +328,12 @@ class ConversationService:
     
     def _extract_and_store_dass_responses(self, conversation_id: str, user_message: str, message_id: int, db: Session):
         """Extract DASS responses from user message and store them in database."""
-        # Clean the user message for better pattern matching
         cleaned_message = user_message.strip().lower()
         
         print(f"DEBUG: Processing message: '{user_message}' (cleaned: '{cleaned_message}')")
         
-        # Pattern to match responses like "1", "2", "3", "4" or "Never", "Sometimes", etc.
         number_patterns = re.findall(r'\b([1-4])\b', user_message)
         
-        # More comprehensive text pattern matching
         text_patterns = []
         if 'never' in cleaned_message and 'sometimes' not in cleaned_message:
             text_patterns.append('never')
@@ -402,7 +347,6 @@ class ConversationService:
         print(f"DEBUG: Found number patterns: {number_patterns}")
         print(f"DEBUG: Found text patterns: {text_patterns}")
         
-        # Convert text responses to numbers
         text_to_number = {
             'never': 1,
             'sometimes': 2,
@@ -411,41 +355,30 @@ class ConversationService:
         }
         
         responses = []
-        
-        # Add number responses
         responses.extend([int(n) for n in number_patterns])
-        
-        # Add converted text responses
         responses.extend([text_to_number[t] for t in text_patterns])
         
         print(f"DEBUG: Final extracted responses: {responses}")
         
-        # Get currently collected responses to determine next question numbers
         existing_responses = db.query(DASSResponse).filter(
             DASSResponse.conversation_id == conversation_id
         ).order_by(DASSResponse.question_id).all()
         
-        # Create set of already answered questions
         answered_questions = {r.question_id for r in existing_responses}
         print(f"DEBUG: Already answered questions: {sorted(answered_questions)}")
         
-        # Only store new responses if we found any valid responses
         if responses:
-            # Assign responses to next unanswered questions
             stored_count = 0
             for response_value in responses:
-                # Find next unanswered question
                 for i in range(1, 22):
                     question_id = f"Q{i}A"
                     if question_id not in answered_questions:
-                        # Double-check that this question doesn't already exist (prevent duplicates)
                         existing_check = db.query(DASSResponse).filter(
                             DASSResponse.conversation_id == conversation_id,
                             DASSResponse.question_id == question_id
                         ).first()
                         
                         if not existing_check:
-                            # Store this response
                             dass_response = DASSResponse(
                                 conversation_id=conversation_id,
                                 question_id=question_id,
@@ -461,7 +394,6 @@ class ConversationService:
                         break
             
             if stored_count > 0:
-                # Commit the new responses
                 db.commit()
                 print(f"DEBUG: Successfully stored {stored_count} new responses")
             else:
@@ -469,7 +401,6 @@ class ConversationService:
         else:
             print(f"DEBUG: No valid responses found in message: '{user_message[:50]}...'")
         
-        # Always commit to ensure any changes are saved
         db.commit()
     
     def _is_assessment_complete(self, conversation_id: str, db: Session) -> bool:
@@ -491,10 +422,8 @@ class ConversationService:
         if collected == 0:
             return "🔍 ASSESSMENT STATUS: Starting assessment. 🎯 Ask question Q1A: 'I found it hard to wind down'"
         elif remaining > 0:
-            # Get set of answered questions for fast lookup
             answered_questions = {r.question_id for r in responses}
             
-            # Find the next question to ask by checking each question in order
             next_question_num = None
             for i in range(1, 22):
                 question_id = f"Q{i}A"
@@ -502,7 +431,6 @@ class ConversationService:
                     next_question_num = i
                     break
             
-            # Map question numbers to their text
             question_texts = {
                 1: "I found it hard to wind down",
                 2: "I was aware of dryness of my mouth", 
@@ -527,17 +455,13 @@ class ConversationService:
                 21: "I felt that life was meaningless"
             }
             
-            # Create a sorted list of answered question numbers for display
             answered_nums = sorted([int(q[1:-1]) for q in answered_questions])
-            
-            # Find the most recently answered question to help with acknowledgment
             last_answered_num = max(answered_nums) if answered_nums else 0
             last_answered_text = question_texts.get(last_answered_num, "Unknown")
             
             if next_question_num:
                 next_question_text = question_texts.get(next_question_num, "Unknown question")
                 
-                # Include information about the last answered question for proper acknowledgment
                 if last_answered_num > 0:
                     return f"🔍 ASSESSMENT STATUS: Collected {collected}/21 responses. ✅ LAST ANSWERED: Q{last_answered_num}A: '{last_answered_text}'. ✅ All answered questions: {answered_nums}. 🎯 NEXT QUESTION TO ASK: Q{next_question_num}A: '{next_question_text}'. ⚠️ IMPORTANT: Acknowledge the user's response to Q{last_answered_num}A first, then ask Q{next_question_num}A."
                 else:
@@ -549,15 +473,12 @@ class ConversationService:
     
     def _make_dass_prediction(self, conversation_id: str, db: Session) -> Dict[str, Any]:
         """Make DASS prediction using collected responses and store results."""
-        # Get all responses for this conversation
         responses = db.query(DASSResponse).filter(
             DASSResponse.conversation_id == conversation_id
         ).all()
         
-        # Convert to expected format
         response_dict = {r.question_id: r.response_value for r in responses}
         
-        # Ensure we have all 21 responses
         for i in range(1, 22):
             question_id = f"Q{i}A"
             if question_id not in response_dict:
@@ -569,7 +490,6 @@ class ConversationService:
         """Make DASS prediction from response dictionary and store results."""
         start_time = time.time()
         
-        # Validate responses
         for i in range(1, 22):
             question_id = f"Q{i}A"
             if question_id not in responses:
@@ -577,20 +497,16 @@ class ConversationService:
             if not isinstance(responses[question_id], int) or responses[question_id] < 1 or responses[question_id] > 4:
                 raise ValueError(f"Invalid response for {question_id}: must be integer 1-4")
         
-        # Add timestamp
         prediction_data = responses.copy()
         prediction_data['timestamp'] = datetime.now().isoformat()
         
-        # Make prediction using DASS service
         result = dass_service.predict(prediction_data)
         
         if result['status'] != 'success':
             raise Exception(result.get('message', 'Prediction failed'))
         
-        # Calculate processing time
         processing_time_ms = int((time.time() - start_time) * 1000)
         
-        # Convert numpy types to native Python types for database storage
         def convert_numpy_types(obj):
             """Recursively convert numpy types to native Python types."""
             if isinstance(obj, np.integer):
@@ -606,10 +522,8 @@ class ConversationService:
             else:
                 return obj
         
-        # Clean the result to remove numpy types
         cleaned_result = convert_numpy_types(result)
         
-        # Store prediction results
         prediction_record = Prediction(
             conversation_id=conversation_id,
             depression_category=cleaned_result['predictions']['Depression']['category_index'],
@@ -618,11 +532,11 @@ class ConversationService:
             anxiety_severity=cleaned_result['predictions']['Anxiety']['severity'],
             stress_category=cleaned_result['predictions']['Stress']['category_index'],
             stress_severity=cleaned_result['predictions']['Stress']['severity'],
-            model_accuracy=float(cleaned_result['model_info']['accuracy']),  # Ensure it's a Python float
-            model_type=str(cleaned_result['model_info']['model_type']),  # Ensure it's a Python string
+            model_accuracy=float(cleaned_result['model_info']['accuracy']),
+            model_type=str(cleaned_result['model_info']['model_type']),
             dataset_size=cleaned_result['model_info'].get('dataset_size'),
             processing_time_ms=processing_time_ms,
-            raw_prediction_data=cleaned_result  # Store the cleaned result
+            raw_prediction_data=cleaned_result
         )
         db.add(prediction_record)
         db.commit()
@@ -649,20 +563,15 @@ class ConversationService:
     def _format_results_context(self, prediction_record: 'Prediction') -> str:
         """Format prediction results for AI context when discussing completed assessments."""
         context_parts = []
-        
-        # Add severity levels
         context_parts.append(f"Depression: {prediction_record.depression_severity}")
         context_parts.append(f"Anxiety: {prediction_record.anxiety_severity}")
         context_parts.append(f"Stress: {prediction_record.stress_severity}")
-        
-        # Add model info
         context_parts.append(f"Model accuracy: {prediction_record.model_accuracy:.2f}")
         
         return "; ".join(context_parts)
     
     def _update_conversation_analytics(self, conversation_id: str, db: Session):
         """Update conversation analytics."""
-        # Count messages and tokens
         messages = db.query(Message).filter(
             Message.conversation_id == conversation_id
         ).all()
@@ -670,7 +579,6 @@ class ConversationService:
         total_messages = len([m for m in messages if m.role != 'system'])
         total_tokens = sum(m.token_count for m in messages if m.token_count)
         
-        # Calculate completion time
         conversation = db.query(Conversation).filter(
             Conversation.id == conversation_id
         ).first()
@@ -680,12 +588,10 @@ class ConversationService:
             time_diff = conversation.updated_at - conversation.created_at
             completion_time_minutes = time_diff.total_seconds() / 60
         
-        # Count responses
         responses_collected = db.query(DASSResponse).filter(
             DASSResponse.conversation_id == conversation_id
         ).count()
         
-        # Create or update analytics
         analytics = ConversationAnalytics(
             conversation_id=conversation_id,
             total_messages=total_messages,
@@ -702,7 +608,7 @@ class ConversationService:
         try:
             messages = db.query(Message).filter(
                 Message.conversation_id == conversation_id,
-                Message.role != 'system'  # Exclude system messages
+                Message.role != 'system'
             ).order_by(Message.timestamp).all()
             
             if not messages:
@@ -787,7 +693,6 @@ class ConversationService:
             ).first()
             
             if conversation:
-                # Delete the conversation (cascade will handle all related records)
                 db.delete(conversation)
                 db.commit()
                 return True
@@ -803,7 +708,6 @@ class ConversationService:
         """Get conversation analytics and metrics."""
         db = SessionLocal()
         try:
-            # Get overall conversation statistics
             total_conversations = db.query(Conversation).count()
             completed_conversations = db.query(Conversation).filter(
                 Conversation.is_completed == True
@@ -811,7 +715,6 @@ class ConversationService:
             
             completion_rate = completed_conversations / total_conversations if total_conversations > 0 else 0
             
-            # Get analytics data
             analytics_data = db.query(ConversationAnalytics).all()
             
             if analytics_data:
@@ -834,7 +737,7 @@ class ConversationService:
             db.close()
 
     def get_conversations_list(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get list of conversations with summary info (without messages) for sidebar."""
+        """Get list of conversations with summary info for sidebar."""
         db = SessionLocal()
         try:
             conversations = db.query(Conversation).order_by(
@@ -843,24 +746,20 @@ class ConversationService:
             
             result = []
             for conv in conversations:
-                # Get the last non-system message for preview
                 last_message = db.query(Message).filter(
                     Message.conversation_id == conv.id,
                     Message.role != 'system'
                 ).order_by(desc(Message.timestamp)).first()
                 
-                # Get message count (excluding system messages)
                 message_count = db.query(Message).filter(
                     Message.conversation_id == conv.id,
                     Message.role != 'system'
                 ).count()
                 
-                # Check if has predictions
                 has_predictions = db.query(Prediction).filter(
                     Prediction.conversation_id == conv.id
                 ).count() > 0
                 
-                # Generate title from first user message or use default
                 first_user_message = db.query(Message).filter(
                     Message.conversation_id == conv.id,
                     Message.role == 'user'
@@ -892,5 +791,4 @@ class ConversationService:
         finally:
             db.close()
 
-# Global instance
 conversation_service = ConversationService() 

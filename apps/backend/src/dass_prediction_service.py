@@ -46,7 +46,7 @@ class DASSPredictionService:
             self.scaler = joblib.load("model/scaler.pkl")
             self.label_encoders = joblib.load("model/label_encoders.pkl")
             
-            print(f"✅ Balanced model loaded successfully!")
+            print(f"model loaded successfully!")
             print(f"   Model type: {self.metadata['model_type']}")
             print(f"   Features: {self.metadata['features']}")
             print(f"   Accuracy: {self.metadata['accuracy']:.4f}")
