@@ -5,15 +5,15 @@ load_dotenv()
 
 class Settings:
     # OpenAI Configuration
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "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")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
     
     # Application Configuration
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
     # Database Configuration
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:Mem@nk134@localhost:5433/mindscan")
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
     
     # Conversation Configuration
     MAX_CONVERSATION_LENGTH: int = int(os.getenv("MAX_CONVERSATION_LENGTH", "50"))
@@ -30,17 +30,17 @@ PHASE 1 - ASSESSMENT COLLECTION:
 When the assessment is not yet complete, your role is to collect responses to 21 specific questions in a conversational, supportive manner.
 
 CRITICAL ASSESSMENT INSTRUCTIONS:
-1. 🔍 ALWAYS check the "🔍 CRITICAL TRACKING INFO" message - this tells you EXACTLY what to do next
-2. ✅ When acknowledging a user's response, refer to the EXACT question they just answered (check "LAST ANSWERED")
-3. ❌ NEVER mix up which question the user answered - acknowledge the correct question text
-4. ✅ ALWAYS ask the EXACT question specified in "NEXT QUESTION TO ASK" 
-5. ⚠️ If you see "Do NOT repeat previous questions" - this means you were about to repeat a question
-6. 💬 Ask questions one at a time in a natural, conversational way
-7. ❤️ Be empathetic and supportive throughout the conversation
-8. 📊 Use the exact scale: Never (1), Sometimes (2), Often (3), Almost Always (4)
-9. 🎯 When you have collected all 21 responses, use the make_dass_prediction tool
-10. 📋 The tracking info is your guide - follow it precisely to avoid confusion
-11. 🔄 WORKFLOW: Acknowledge user's response to LAST ANSWERED question → Ask NEXT QUESTION TO ASK
+1. ALWAYS check the "🔍 CRITICAL TRACKING INFO" message - this tells you EXACTLY what to do next
+2. When acknowledging a user's response, simply thank them without repeating their answer back to them
+3. NEVER mix up which question the user answered - acknowledge that you received their response
+4. ALWAYS ask the EXACT question specified in "NEXT QUESTION TO ASK" 
+5. If you see "Do NOT repeat previous questions" - this means you were about to repeat a question
+6. Ask questions one at a time in a natural, conversational way
+7. Be empathetic and supportive throughout the conversation
+8. Use the exact scale: Never (1), Sometimes (2), Often (3), Almost Always (4)
+9. When you have collected all 21 responses, use the make_dass_prediction tool
+10. The tracking info is your guide - follow it precisely to avoid confusion
+11. WORKFLOW: Acknowledge user's response naturally → Ask NEXT QUESTION TO ASK
 
 PHASE 2 - POST-ASSESSMENT SUPPORT:
 Once the assessment is complete, you transition to being a supportive mental health assistant who can discuss the results and provide ongoing therapeutic conversation.
@@ -88,5 +88,21 @@ RESPONSE SCALE:
 
 Remember: Be warm, professional, and reassuring throughout both phases. ALWAYS follow the progress information provided to avoid repeating questions. The progress tracker tells you exactly which question to ask next - follow it precisely to maintain proper conversation flow.
 """
+
+    @classmethod
+    def validate_required_env_vars(cls):
+        """Validate that all required environment variables are set."""
+        required_vars = {
+            "OPENAI_API_KEY": cls.OPENAI_API_KEY,
+            "DATABASE_URL": cls.DATABASE_URL,
+        }
+        
+        missing_vars = [var for var, value in required_vars.items() if not value]
+        
+        if missing_vars:
+            raise ValueError(
+                f"Missing required environment variables: {', '.join(missing_vars)}. "
+                f"Please set them in your .env file or environment."
+            )
 
 settings = Settings() 

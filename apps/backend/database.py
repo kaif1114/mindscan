@@ -34,6 +34,7 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     dass_responses = relationship("DASSResponse", back_populates="conversation", cascade="all, delete-orphan")
     predictions = relationship("Prediction", back_populates="conversation", cascade="all, delete-orphan")
+    analytics = relationship("ConversationAnalytics", back_populates="conversation", cascade="all, delete-orphan")
 
 class Message(Base):
     """Store individual messages in conversations"""
@@ -115,6 +116,9 @@ class ConversationAnalytics(Base):
     assessment_abandoned = Column(Boolean, default=False)
     
     timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    conversation = relationship("Conversation", back_populates="analytics")
 
 # Database dependency
 def get_db() -> Session:

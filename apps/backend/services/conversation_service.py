@@ -787,9 +787,14 @@ class ConversationService:
             ).first()
             
             if conversation:
-                db.delete(conversation)  # Cascade will delete related records
+                # Delete the conversation (cascade will handle all related records)
+                db.delete(conversation)
                 db.commit()
                 return True
+            return False
+        except Exception as e:
+            db.rollback()
+            print(f"Error deleting conversation {conversation_id}: {e}")
             return False
         finally:
             db.close()
