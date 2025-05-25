@@ -1,25 +1,19 @@
-# preprocess_new_dataset.py
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
 
 def load_new_dataset(file_path="data/dataset.csv"):
-    """
-    Load the new DASS dataset.
-    """
+    """Load the new DASS dataset."""
     print("Loading DASS dataset...")
     df = pd.read_csv(file_path)
     print(f"Dataset loaded: {df.shape[0]} samples, {df.shape[1]} features")
     return df
 
 def calculate_dass_scores(df):
-    """
-    Calculate Depression, Anxiety, and Stress scores from DASS-21 questions.
-    """
+    """Calculate Depression, Anxiety, and Stress scores from DASS-21 questions."""
     print("Calculating DASS scores...")
-    
-    # DASS-21 question mapping
+
     dass_mapping = {
         'Depression': [3, 5, 10, 13, 16, 17, 21],
         'Anxiety': [2, 4, 7, 9, 15, 19, 20],
@@ -30,7 +24,6 @@ def calculate_dass_scores(df):
     
     for category, questions in dass_mapping.items():
         question_cols = [f"Q{q}A" for q in questions]
-        # DASS scores: sum of questions × 2 (since DASS-21 is short version)
         result_df[f'{category}_Score'] = result_df[question_cols].sum(axis=1) * 2
         
         print(f"{category} Score - Range: {result_df[f'{category}_Score'].min()}-{result_df[f'{category}_Score'].max()}")
@@ -38,12 +31,10 @@ def calculate_dass_scores(df):
     return result_df
 
 def categorize_dass_scores(df):
-    """
-    Convert DASS scores to severity categories.
-    """
+    """Convert DASS scores to severity categories."""
     print("Creating severity categories...")
     
-    # DASS severity thresholds
+
     categories = {
         'Depression': [(0, 9, 0), (10, 13, 1), (14, 20, 2), (21, 27, 3), (28, float('inf'), 4)],
         'Anxiety': [(0, 7, 0), (8, 9, 1), (10, 14, 2), (15, 19, 3), (20, float('inf'), 4)],
@@ -62,11 +53,10 @@ def categorize_dass_scores(df):
             for min_val, max_val, cat_num in categories[category]:
                 if min_val <= score <= max_val:
                     return cat_num
-            return 4  # Default to highest severity
+            return 4
         
         result_df[category_col] = result_df[score_col].apply(categorize_score)
         
-        # Print distribution
         dist = result_df[category_col].value_counts().sort_index()
         print(f"{category} distribution:")
         for i, count in dist.items():
@@ -75,27 +65,18 @@ def categorize_dass_scores(df):
     return result_df
 
 def select_and_preprocess_features(df):
-    """
-    Select relevant features and preprocess them for machine learning.
-    """
+    """Select relevant features and preprocess them for machine learning."""
     print("Selecting and preprocessing features...")
     
-    # 1. DASS question responses (Q1A to Q21A)
     dass_questions = [f"Q{i}A" for i in range(1, 22)]
-    
-    # 2. Key demographic features
     demographic_features = ['age', 'gender', 'education', 'race', 'religion', 'married']
-    
-    # 3. TIPI personality features (if available)
     tipi_features = [f"TIPI{i}" for i in range(1, 11) if f"TIPI{i}" in df.columns]
     
-    # 4. Additional relevant features
     other_features = []
     for col in ['country', 'familysize', 'orientation', 'voted', 'engnat', 'hand']:
         if col in df.columns:
             other_features.append(col)
     
-    # Combine all features
     feature_columns = dass_questions + demographic_features + tipi_features + other_features
     available_features = [col for col in feature_columns if col in df.columns]
     
@@ -105,54 +86,44 @@ def select_and_preprocess_features(df):
     print(f"  TIPI personality: {len(tipi_features)}")
     print(f"  Other features: {len([f for f in other_features if f in df.columns])}")
     
-    # Create feature dataframe
     features_df = df[available_features].copy()
     
-    # Handle missing values
     print("Handling missing values...")
     
-    # For DASS questions (should have no missing values, but just in case)
     for col in dass_questions:
         if col in features_df.columns:
             features_df[col] = features_df[col].fillna(features_df[col].median())
     
-    # For categorical features, fill with mode or create "Unknown" category
     categorical_features = ['gender', 'education', 'race', 'religion', 'married', 'country', 'orientation', 'voted', 'engnat', 'hand']
     for col in categorical_features:
         if col in features_df.columns:
-            features_df[col] = features_df[col].fillna(-1)  # Use -1 for unknown
+            features_df[col] = features_df[col].fillna(-1)
     
-    # For numeric features, fill with median
     numeric_features = ['age', 'familysize'] + tipi_features
     for col in numeric_features:
         if col in features_df.columns:
             features_df[col] = features_df[col].fillna(features_df[col].median())
     
-    # Handle outliers in age (some entries have unrealistic ages)
+
     if 'age' in features_df.columns:
-        # Cap age at reasonable limits
         features_df['age'] = features_df['age'].clip(13, 100)
     
     print("Feature preprocessing completed!")
     return features_df, available_features
 
 def encode_categorical_features(features_df):
-    """
-    Encode categorical features for machine learning.
-    """
+    """Encode categorical features for machine learning."""
     print("Encoding categorical features...")
     
     encoded_df = features_df.copy()
     label_encoders = {}
     
-    # Features that need label encoding
     categorical_cols = ['gender', 'education', 'race', 'religion', 'married', 
                        'country', 'orientation', 'voted', 'engnat', 'hand']
     
     for col in categorical_cols:
         if col in encoded_df.columns:
             le = LabelEncoder()
-            # Handle unknown values (-1) by including them in encoding
             encoded_df[col] = le.fit_transform(encoded_df[col].astype(str))
             label_encoders[col] = le
             print(f"  Encoded {col}: {len(le.classes_)} unique values")
@@ -160,9 +131,7 @@ def encode_categorical_features(features_df):
     return encoded_df, label_encoders
 
 def scale_features(features_df):
-    """
-    Scale numerical features for better model performance.
-    """
+    """Scale numerical features for better model performance."""
     print("Scaling features...")
     
     scaler = StandardScaler()
@@ -173,52 +142,35 @@ def scale_features(features_df):
     return scaled_df, scaler
 
 def preprocess_new_dataset(input_file="data/dataset.csv", output_file="preprocessed_dass_data.csv"):
-    """
-    Complete preprocessing pipeline for the new DASS dataset.
-    """
+    """Complete preprocessing pipeline for the new DASS dataset."""
     print("="*60)
     print("PREPROCESSING NEW DASS DATASET")
     print("="*60)
     
-    # 1. Load dataset
     df = load_new_dataset(input_file)
-    
-    # 2. Calculate DASS scores
     df_with_scores = calculate_dass_scores(df)
-    
-    # 3. Create severity categories
     df_categorized = categorize_dass_scores(df_with_scores)
-    
-    # 4. Select and preprocess features
     features_df, feature_names = select_and_preprocess_features(df_categorized)
-    
-    # 5. Encode categorical features
     encoded_df, label_encoders = encode_categorical_features(features_df)
-    
-    # 6. Scale features
     scaled_df, scaler = scale_features(encoded_df)
     
-    # 7. Prepare final dataset with targets
     target_columns = ['Depression_Category', 'Anxiety_Category', 'Stress_Category']
     targets_df = df_categorized[target_columns].copy()
     
-    # Combine features and targets
     final_df = pd.concat([scaled_df, targets_df], axis=1)
     
-    # 8. Save preprocessed data
     final_df.to_csv(output_file, index=False)
-    print(f"\n✅ Preprocessed dataset saved to: {output_file}")
+    print(f"\nPreprocessed dataset saved to: {output_file}")
     print(f"   Shape: {final_df.shape}")
     print(f"   Features: {len(feature_names)}")
     print(f"   Targets: {len(target_columns)}")
     
-    # Save preprocessing objects
     import joblib
     joblib.dump(label_encoders, "model/new_label_encoders.pkl")
     joblib.dump(scaler, "model/new_scaler.pkl")
     joblib.dump(feature_names, "model/new_feature_names.pkl")
     
-    print("\n✅ Preprocessing objects saved:")
+    print("\nPreprocessing objects saved:")
     print("   - model/new_label_encoders.pkl")
     print("   - model/new_scaler.pkl") 
     print("   - model/new_feature_names.pkl")
@@ -226,10 +178,8 @@ def preprocess_new_dataset(input_file="data/dataset.csv", output_file="preproces
     return final_df, feature_names, label_encoders, scaler
 
 if __name__ == "__main__":
-    # Run preprocessing
     processed_df, features, encoders, scaler = preprocess_new_dataset()
     
-    # Display summary
     print("\n" + "="*60)
     print("PREPROCESSING SUMMARY")
     print("="*60)

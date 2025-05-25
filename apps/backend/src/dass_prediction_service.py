@@ -7,14 +7,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class DASSPredictionService:
-    """
-    Service class for making predictions using the DASS mental health model.
-    """
+    """Service class for making predictions using the DASS mental health model."""
     
     def __init__(self, model_path="model/dass_model.pkl"):
-        """
-        Initialize the prediction service by loading the trained model and preprocessing objects.
-        """
         self.model_path = model_path
         self.model = None
         self.feature_names = None
@@ -27,22 +22,13 @@ class DASSPredictionService:
         self.load_model_artifacts()
     
     def load_model_artifacts(self):
-        """
-        Load the trained model and all preprocessing artifacts.
-        """
+        """Load the trained model and all preprocessing artifacts."""
         try:
             print("Loading DASS balanced model artifacts...")
             
-            # Load balanced model
             self.model = joblib.load(self.model_path)
-            
-            # Load balanced model feature names
             self.feature_names = joblib.load("model/feature_names.pkl")
-            
-            # Load balanced model metadata
             self.metadata = joblib.load("model/model_metadata.pkl")
-            
-            # Load preprocessing objects for balanced model
             self.scaler = joblib.load("model/scaler.pkl")
             self.label_encoders = joblib.load("model/label_encoders.pkl")
             
@@ -60,10 +46,8 @@ class DASSPredictionService:
             raise e
     
     def validate_dass_input(self, input_data):
-        """
-        Validate that the input contains all required DASS questions.
-        """
-        required_questions = [f"Q{i}A" for i in range(1, 22)]  # Q1A to Q21A
+        """Validate that the input contains all required DASS questions."""
+        required_questions = [f"Q{i}A" for i in range(1, 22)]
         
         missing_questions = []
         for question in required_questions:
@@ -73,7 +57,6 @@ class DASSPredictionService:
         if missing_questions:
             raise ValueError(f"Missing required DASS questions: {missing_questions}")
         
-        # Validate question responses are in valid range (1-4)
         for question in required_questions:
             try:
                 value = int(input_data[question])
@@ -85,35 +68,28 @@ class DASSPredictionService:
         return True
     
     def preprocess_input(self, input_data):
-        """
-        Preprocess user input to match the model's expected format.
-        """
-        # Create a DataFrame from input
+        """Preprocess user input to match the model's expected format."""
         df = pd.DataFrame([input_data])
-        
-        # Ensure we have all required features
         processed_features = {}
         
-        # 1. DASS questions (Q1A to Q21A) - should be provided by user
-        # Frontend sends 1-4, but DASS scoring uses 0-3, so subtract 1
+        # DASS questions: Convert from frontend scale (1-4) to DASS scale (0-3)
         for i in range(1, 22):
             question = f"Q{i}A"
             if question in df.columns:
                 frontend_value = int(df[question].iloc[0])
-                # Convert from frontend scale (1-4) to DASS scale (0-3)
                 dass_value = frontend_value - 1
                 processed_features[question] = dass_value
             else:
                 raise ValueError(f"Missing required DASS question: {question}")
         
-        # 2. Demographic features with defaults if not provided
+        # Demographic features with defaults
         demographic_defaults = {
-            'age': 25,  # Default age
-            'gender': 2,  # Default gender (most common in dataset)
-            'education': 3,  # Default education level
-            'race': 10,  # Default race (most common in dataset)
-            'religion': 10,  # Default religion
-            'married': 1  # Default marital status
+            'age': 25,
+            'gender': 2,
+            'education': 3,
+            'race': 10,
+            'religion': 10,
+            'married': 1
         }
         
         for feature, default_value in demographic_defaults.items():
@@ -122,15 +98,15 @@ class DASSPredictionService:
             else:
                 processed_features[feature] = default_value
         
-        # 3. TIPI personality features with defaults
+        # TIPI personality features with defaults
         for i in range(1, 11):
             tipi_feature = f"TIPI{i}"
             if tipi_feature in df.columns:
                 processed_features[tipi_feature] = df[tipi_feature].iloc[0]
             else:
-                processed_features[tipi_feature] = 3  # Neutral default
+                processed_features[tipi_feature] = 3
         
-        # 4. Other features with defaults
+        # Other features with defaults
         other_defaults = {
             'country': 'US',
             'familysize': 3,
@@ -146,7 +122,6 @@ class DASSPredictionService:
             else:
                 processed_features[feature] = default_value
         
-        # Convert to DataFrame
         feature_df = pd.DataFrame([processed_features])
         
         # Handle categorical encoding
@@ -156,37 +131,31 @@ class DASSPredictionService:
         for feature in categorical_features:
             if feature in feature_df.columns and feature in self.label_encoders:
                 try:
-                    # Handle unseen values by using the most frequent class
                     value = str(feature_df[feature].iloc[0])
                     encoder = self.label_encoders[feature]
                     
                     if value in encoder.classes_:
                         feature_df[feature] = encoder.transform([value])[0]
                     else:
-                        # Use the most frequent class (typically class 0)
                         feature_df[feature] = 0
                 except Exception:
                     feature_df[feature] = 0
         
-        # Check if this is an "all Never" case and handle specially
+        # Special handling for "all Never" responses
         dass_questions = [f'Q{i}A' for i in range(1, 22)]
         dass_values = [processed_features[q] for q in dass_questions if q in processed_features]
         
         if all(val == 0 for val in dass_values):
-            # This is an "all Never" case - use a known normal case from training data
             print("Detected 'all Never' responses - using normal case reference")
             try:
-                # Load dataset to find a normal case
                 df_aug = pd.read_csv('data/dataset.csv')
                 normal_cases = df_aug[(df_aug['Depression_Category'] == 0) & 
                                      (df_aug['Anxiety_Category'] == 0) & 
                                      (df_aug['Stress_Category'] == 0)]
                 
                 if len(normal_cases) > 0:
-                    # Use the first normal case but keep our demographic/other features
                     normal_sample = normal_cases.iloc[0]
                     
-                    # Replace only DASS questions with known normal values
                     for q in dass_questions:
                         if q in feature_df.columns and q in normal_sample.index:
                             feature_df[q] = normal_sample[q]
@@ -194,7 +163,6 @@ class DASSPredictionService:
                     print("Using reference normal case for DASS questions")
             except Exception as e:
                 print(f"⚠️ Could not load reference normal case: {e}")
-                # Fall back to original scaling approach
         
         # Ensure all required features are present in correct order
         final_features = []
@@ -202,36 +170,23 @@ class DASSPredictionService:
             if feature_name in feature_df.columns:
                 final_features.append(feature_df[feature_name].iloc[0])
             else:
-                # Use default value for missing features
                 final_features.append(0)
         
-        # Convert to numpy array and reshape
-        feature_array = np.array(final_features).reshape(1, -1)
+        feature_df_final = pd.DataFrame([final_features], columns=self.feature_names)
         
-        # Only apply scaling if we didn't use reference normal case
         if not (all(val == 0 for val in dass_values)):
-            # Apply scaling for non-"Never" cases
-            scaled_features = self.scaler.transform(feature_array)
-            return scaled_features
+            scaled_features = self.scaler.transform(feature_df_final)
+            return pd.DataFrame(scaled_features, columns=self.feature_names)
         else:
-            # For "Never" cases, the features are already in the correct scale
-            return feature_array
+            return feature_df_final
     
     def predict(self, input_data):
-        """
-        Make predictions using the DASS model.
-        """
+        """Make predictions using the DASS model."""
         try:
-            # Validate input
             self.validate_dass_input(input_data)
-            
-            # Preprocess input
             processed_input = self.preprocess_input(input_data)
-            
-            # Make predictions
             predictions = self.model.predict(processed_input)
             
-            # Convert predictions to readable format
             results = {}
             for i, target in enumerate(self.target_names):
                 category_index = predictions[0][i]
@@ -258,27 +213,19 @@ class DASSPredictionService:
             }
     
     def predict_with_probabilities(self, input_data):
-        """
-        Make predictions with probability estimates (if model supports it).
-        """
+        """Make predictions with probability estimates (if model supports it)."""
         try:
-            # Validate and preprocess input
             self.validate_dass_input(input_data)
             processed_input = self.preprocess_input(input_data)
-            
-            # Get predictions
             predictions = self.model.predict(processed_input)
             
-            # Try to get probabilities if available
             probabilities = None
             try:
-                # Check if model supports probability prediction
                 if hasattr(self.model, 'predict_proba'):
                     probabilities = self.model.predict_proba(processed_input)
             except:
                 probabilities = None
             
-            # Format results
             results = {}
             for i, target in enumerate(self.target_names):
                 category_index = predictions[0][i]
@@ -289,10 +236,9 @@ class DASSPredictionService:
                     'severity': severity
                 }
                 
-                # Add probabilities if available
                 if probabilities is not None:
                     try:
-                        probs = probabilities[i][0]  # For this sample
+                        probs = probabilities[i][0]
                         prob_dict = {}
                         for j, prob in enumerate(probs):
                             if j < len(self.severity_labels):
@@ -320,9 +266,7 @@ class DASSPredictionService:
             }
     
     def get_dass_questions(self):
-        """
-        Return the DASS-21 questions for the frontend.
-        """
+        """Return the DASS-21 questions for the frontend."""
         dass_questions = {
             "Q1A": "I found it hard to wind down",
             "Q2A": "I was aware of dryness of my mouth",
@@ -358,5 +302,4 @@ class DASSPredictionService:
             }
         }
 
-# Create a global instance
 dass_service = DASSPredictionService() 
