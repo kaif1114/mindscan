@@ -44,6 +44,10 @@ class DASSPredictionService:
         except Exception as e:
             print(f"Error initializing prediction service: {e}")
             raise e
+
+    def load_model(self):
+        """Reload the model artifacts (useful after retraining)."""
+        self.load_model_artifacts()
     
     def validate_dass_input(self, input_data):
         """Validate that the input contains all required DASS questions."""
@@ -265,6 +269,10 @@ class DASSPredictionService:
                 'message': str(e)
             }
     
+    def get_questions(self):
+        """Return the DASS-21 questions for the frontend (alias for get_dass_questions)."""
+        return self.get_dass_questions()
+
     def get_dass_questions(self):
         """Return the DASS-21 questions for the frontend."""
         dass_questions = {

@@ -333,13 +333,136 @@ async def predict_dass_detailed(request: DASSPredictionRequest):
 
 @app.get("/api/dass/questions")
 async def get_dass_questions():
-    """Get DASS-21 questions for reference."""
+    """Get all DASS-21 questions for reference."""
     try:
-        return dass_service.get_dass_questions()
+        return dass_service.get_questions()
     except Exception as e:
         logger.error(f"Error getting DASS questions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/model/retrain")
+async def retrain_model():
+    """Retrain the DASS model using conversation response data."""
+    try:
+        from database import SessionLocal, DASSResponse
+        import pandas as pd
+        import subprocess
+        import os
+        
+        logger.info("Starting model retraining process...")
+        
+       
+        db = SessionLocal()
+        try:
+            responses = db.query(DASSResponse).all()
+            if len(responses) < 50:  
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Insufficient data for retraining. Need at least 50 responses, got {len(responses)}"
+                )
+            
+           
+            training_data = []
+            conversation_responses = {}
+            
+            for response in responses:
+                conv_id = str(response.conversation_id)
+                if conv_id not in conversation_responses:
+                    conversation_responses[conv_id] = {}
+                conversation_responses[conv_id][response.question_id] = response.response_value
+            
+      
+            complete_conversations = []
+            for conv_id, responses_dict in conversation_responses.items():
+                if len(responses_dict) == 21:  
+                    complete_conversations.append(responses_dict)
+            
+            if len(complete_conversations) < 20:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient complete conversations for retraining. Need at least 20, got {len(complete_conversations)}"
+                )
+            
+          
+            df_data = []
+            for conv_responses in complete_conversations:
+                row = {}
+            
+                for i in range(1, 22):
+                    question_key = f"Q{i}A"
+                    row[question_key] = conv_responses.get(question_key, 0)
+                
+    
+                depression_score = sum(conv_responses.get(f"Q{i}A", 0) for i in [3, 5, 10, 13, 16, 17, 21])
+                anxiety_score = sum(conv_responses.get(f"Q{i}A", 0) for i in [2, 4, 7, 9, 15, 19, 20])
+                stress_score = sum(conv_responses.get(f"Q{i}A", 0) for i in [1, 6, 8, 11, 12, 14, 18])
+                
+          
+                row['Depression_Category'] = min(4, depression_score // 5)
+                row['Anxiety_Category'] = min(4, anxiety_score // 4)
+                row['Stress_Category'] = min(4, stress_score // 6)
+                
+                df_data.append(row)
+            
+         
+            new_df = pd.DataFrame(df_data)
+            backup_path = './data/dataset_backup.csv'
+            new_data_path = './data/conversation_training_data.csv'
+            
+            # Backup existing dataset
+            if os.path.exists('./data/dataset.csv'):
+                import shutil
+                shutil.copy('./data/dataset.csv', backup_path)
+            
+           
+            new_df.to_csv(new_data_path, index=False)
+            
+        
+            if os.path.exists('./data/dataset.csv'):
+                existing_df = pd.read_csv('./data/dataset.csv')
+                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                combined_df.to_csv('./data/dataset.csv', index=False)
+            else:
+                new_df.to_csv('./data/dataset.csv', index=False)
+            
+            logger.info(f"Prepared training data with {len(df_data)} new samples")
+            
+            # Run training script
+            result = subprocess.run(
+                ['python', 'train_model.py'],
+                cwd=os.getcwd(),
+                capture_output=True,
+                text=True,
+                timeout=300  
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Training failed: {result.stderr}")
+                raise HTTPException(status_code=500, detail=f"Model training failed: {result.stderr}")
+            
+    
+            dass_service.load_model()
+            
+            logger.info("Model retraining completed successfully")
+            
+            return {
+                "status": "success",
+                "message": "Model retrained successfully",
+                "training_samples": len(df_data),
+                "complete_conversations": len(complete_conversations),
+                "total_responses": len(responses),
+                "new_accuracy": dass_service.metadata.get('accuracy', 'Unknown'),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        finally:
+            db.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during model retraining: {e}")
+        raise HTTPException(status_code=500, detail=f"Retraining failed: {str(e)}")
 
 @app.exception_handler(404)
 async def not_found_handler(request, exc):

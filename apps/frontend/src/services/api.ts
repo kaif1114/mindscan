@@ -105,6 +105,20 @@ class APIService {
     const response = await this.client.get<HealthResponse>("/health");
     return response.data;
   }
+
+  // Model retraining
+  async retrainModel(): Promise<{
+    status: string;
+    message: string;
+    training_samples: number;
+    complete_conversations: number;
+    total_responses: number;
+    new_accuracy: string | number;
+    timestamp: string;
+  }> {
+    const response = await this.client.post("/model/retrain");
+    return response.data;
+  }
 }
 
 export const apiService = new APIService();
