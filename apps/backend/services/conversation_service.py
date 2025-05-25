@@ -20,7 +20,7 @@ class ConversationService:
     def __init__(self):
         self.client = OpenAI(
             api_key=settings.OPENAI_API_KEY,
-            max_retries=0  # Disable automatic retries to prevent multiple API calls
+            max_retries=0  
         )
         
     def create_conversation(self, initial_message: str = None, user_ip: str = None, user_agent: str = None) -> Tuple[str, str]:
@@ -97,30 +97,31 @@ class ConversationService:
             is_complete = self._is_assessment_complete(conversation_id, db)
             predictions = None
             
-            if is_complete:
-                # Make DASS prediction
+            # Check if we already have predictions (assessment was previously completed)
+            existing_prediction = db.query(Prediction).filter(
+                Prediction.conversation_id == conversation_id
+            ).first()
+            
+            if existing_prediction:
+                # Assessment was already completed, continue conversation with context
+                predictions = existing_prediction.raw_prediction_data
+                response = self._get_assistant_response(conversation_id, db)
+                
+            elif is_complete:
+                # Assessment just completed - make prediction
                 try:
                     predictions = self._make_dass_prediction(conversation_id, db)
                     
-                    # Mark conversation as completed
+                    # Mark conversation as completed but don't end it
                     conversation.is_completed = True
                     conversation.updated_at = datetime.utcnow()
                     db.commit()
                     
-                    # Add prediction results to the conversation context
-                    prediction_summary = self._format_prediction_summary(predictions)
-                    response = f"Thank you for completing the DASS-21 assessment. {prediction_summary}"
-                    
-                    # Store assistant response
-                    assistant_msg = Message(
-                        conversation_id=conversation.id,
-                        role="assistant",
-                        content=response
-                    )
-                    db.add(assistant_msg)
-                    
                     # Update analytics
                     self._update_conversation_analytics(conversation_id, db)
+                    
+                    # Let the AI generate a natural response with the assessment results context
+                    response = self._get_assistant_response(conversation_id, db)
                     
                 except Exception as e:
                     response = f"I've collected all your responses, but there was an issue processing the assessment: {str(e)}"
@@ -131,7 +132,7 @@ class ConversationService:
                     )
                     db.add(assistant_msg)
             else:
-                # Continue conversation
+                # Continue assessment
                 response = self._get_assistant_response(conversation_id, db)
             
             db.commit()
@@ -146,54 +147,91 @@ class ConversationService:
             # Get conversation messages with memory limit (following OpenAI best practices)
             messages = self._get_conversation_context(conversation_id, db)
             
-            # Add current progress to help the assistant
-            progress_info = self._get_progress_info(conversation_id, db)
-            if progress_info:
+            # Check if assessment is already completed
+            existing_prediction = db.query(Prediction).filter(
+                Prediction.conversation_id == conversation_id
+            ).first()
+            
+            # Only add system context if this is the first message after completion
+            # Check if the last assistant message already acknowledged the completion
+            last_assistant_message = db.query(Message).filter(
+                Message.conversation_id == conversation_id,
+                Message.role == "assistant"
+            ).order_by(Message.timestamp.desc()).first()
+            
+            completion_already_acknowledged = False
+            if last_assistant_message and existing_prediction:
+                # Check if the last message already mentioned assessment completion
+                completion_keywords = ["assessment", "completed", "results", "dass"]
+                completion_already_acknowledged = any(
+                    keyword in last_assistant_message.content.lower() 
+                    for keyword in completion_keywords
+                )
+            
+            if existing_prediction and not completion_already_acknowledged:
+                # First time acknowledging completion - add context
+                results_context = self._format_results_context(existing_prediction)
                 messages.append({
                     "role": "system",
-                    "content": f"Current progress: {progress_info}"
+                    "content": f"The user has completed their DASS-21 assessment. Results: {results_context}. You are now in post-assessment therapeutic conversation mode. Respond naturally to the user's messages and engage in supportive dialogue about their mental health."
                 })
+            elif not existing_prediction:
+                # Still in assessment phase - add progress info
+                progress_info = self._get_progress_info(conversation_id, db)
+                if progress_info:
+                    # Insert progress info right after system message for maximum visibility
+                    messages.insert(1, {
+                        "role": "system",
+                        "content": f"🔍 CRITICAL TRACKING INFO: {progress_info}"
+                    })
             
-            
-            
-            # Define tool for making DASS predictions
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "make_dass_prediction",
-                        "description": "Make a DASS prediction when all 21 responses have been collected",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "responses": {
-                                    "type": "object",
-                                    "description": "Dictionary with keys Q1A-Q21A and integer values 1-4",
-                                    "additionalProperties": {
-                                        "type": "integer",
-                                        "minimum": 1,
-                                        "maximum": 4
+            # Define tool for making DASS predictions (only during assessment phase)
+            tools = []
+            if not existing_prediction:
+                tools = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "make_dass_prediction",
+                            "description": "Make a DASS prediction when all 21 responses have been collected",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "responses": {
+                                        "type": "object",
+                                        "description": "Dictionary with keys Q1A-Q21A and integer values 1-4",
+                                        "additionalProperties": {
+                                            "type": "integer",
+                                            "minimum": 1,
+                                            "maximum": 4
+                                        }
                                     }
-                                }
-                            },
-                            "required": ["responses"]
+                                },
+                                "required": ["responses"]
+                            }
                         }
                     }
-                }
-            ]
-            
-            # Make API call - let OpenAI SDK handle retries automatically
-            start_time = time.time()
-            
+                ]
+
             try:
-                response = self.client.chat.completions.create(
-                    model=settings.OPENAI_MODEL,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    max_tokens=1000,
-                    temperature=0.7
-                )
+                # Use tools only if we're still in assessment phase
+                if tools:
+                    response = self.client.chat.completions.create(
+                        model=settings.OPENAI_MODEL,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="auto",
+                        max_tokens=1000,
+                        temperature=0.7
+                    )
+                else:
+                    # Post-assessment: no tools, just natural conversation
+                    response = self.client.chat.completions.create(
+                        model=settings.OPENAI_MODEL,
+                        messages=messages,
+                        max_tokens=1000,
+                        temperature=0.7
+                    )
                 
             except Exception as e:
                 if "429" in str(e) or "rate_limit" in str(e).lower():
@@ -207,23 +245,11 @@ class ConversationService:
                     db.add(assistant_msg)
                     return error_response
                 else:
-                    # Different error, re-raise
                     raise e
             
-            # Calculate token usage and log it
             token_count = response.usage.total_tokens if response.usage else None
-            input_tokens = response.usage.prompt_tokens if response.usage else None
-            output_tokens = response.usage.completion_tokens if response.usage else None
-            
-            print(f"💰 TOKEN USAGE: Input: {input_tokens}, Output: {output_tokens}, Total: {token_count}")
-            if settings.OPENAI_MODEL.startswith("gpt-4"):
-                estimated_cost = (input_tokens * 0.03 + output_tokens * 0.06) / 1000
-                print(f"💰 ESTIMATED COST: ${estimated_cost:.4f}")
-            elif settings.OPENAI_MODEL.startswith("gpt-3.5"):
-                estimated_cost = (input_tokens * 0.001 + output_tokens * 0.002) / 1000
-                print(f"💰 ESTIMATED COST: ${estimated_cost:.4f}")
-            
-            # Handle tool calls
+        
+            # Handle tool calls (only during assessment phase)
             choice = response.choices[0]
             if choice.message.tool_calls:
                 for tool_call in choice.message.tool_calls:
@@ -233,8 +259,9 @@ class ConversationService:
                             predictions = self._make_dass_prediction_from_args(
                                 conversation_id, args["responses"], db
                             )
-                            prediction_summary = self._format_prediction_summary(predictions)
-                            assistant_response = f"Thank you for completing the DASS-21 assessment. {prediction_summary}"
+                            # Let the AI generate a natural response after making the prediction
+                            # We'll make another call to get the AI's response with the new context
+                            assistant_response = self._get_natural_completion_response(conversation_id, db)
                         except Exception as e:
                             assistant_response = f"I've collected your responses, but encountered an issue processing the assessment: {str(e)}"
             else:
@@ -264,6 +291,33 @@ class ConversationService:
             db.add(assistant_msg)
             
             return error_response
+    
+    def _get_natural_completion_response(self, conversation_id: str, db: Session) -> str:
+        """Get a natural AI response after assessment completion."""
+        try:
+            # Get conversation context including the new prediction
+            messages = self._get_conversation_context(conversation_id, db)
+            
+            # Add a simple context about just completing the assessment
+            messages.append({
+                "role": "system",
+                "content": "The user has just completed their DASS-21 assessment. Provide a natural, empathetic response acknowledging the completion and offering to discuss the results. Be supportive and encourage ongoing conversation."
+            })
+            
+            # Make a simple completion call without tools
+            response = self.client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            assistant_response = response.choices[0].message.content
+            
+            return assistant_response
+            
+        except Exception as e:
+            return "Thank you for completing the assessment. I'm here to discuss your results and provide support. How are you feeling about what we've covered?"
     
     def _get_conversation_context(self, conversation_id: str, db: Session) -> List[Dict[str, str]]:
         """
@@ -326,9 +380,27 @@ class ConversationService:
     
     def _extract_and_store_dass_responses(self, conversation_id: str, user_message: str, message_id: int, db: Session):
         """Extract DASS responses from user message and store them in database."""
+        # Clean the user message for better pattern matching
+        cleaned_message = user_message.strip().lower()
+        
+        print(f"DEBUG: Processing message: '{user_message}' (cleaned: '{cleaned_message}')")
+        
         # Pattern to match responses like "1", "2", "3", "4" or "Never", "Sometimes", etc.
         number_patterns = re.findall(r'\b([1-4])\b', user_message)
-        text_patterns = re.findall(r'\b(never|sometimes|often|almost always)\b', user_message.lower())
+        
+        # More comprehensive text pattern matching
+        text_patterns = []
+        if 'never' in cleaned_message and 'sometimes' not in cleaned_message:
+            text_patterns.append('never')
+        elif 'sometimes' in cleaned_message:
+            text_patterns.append('sometimes')
+        elif 'often' in cleaned_message and 'almost' not in cleaned_message:
+            text_patterns.append('often')
+        elif 'almost always' in cleaned_message or ('almost' in cleaned_message and 'always' in cleaned_message):
+            text_patterns.append('almost always')
+        
+        print(f"DEBUG: Found number patterns: {number_patterns}")
+        print(f"DEBUG: Found text patterns: {text_patterns}")
         
         # Convert text responses to numbers
         text_to_number = {
@@ -346,6 +418,8 @@ class ConversationService:
         # Add converted text responses
         responses.extend([text_to_number[t] for t in text_patterns])
         
+        print(f"DEBUG: Final extracted responses: {responses}")
+        
         # Get currently collected responses to determine next question numbers
         existing_responses = db.query(DASSResponse).filter(
             DASSResponse.conversation_id == conversation_id
@@ -353,23 +427,50 @@ class ConversationService:
         
         # Create set of already answered questions
         answered_questions = {r.question_id for r in existing_responses}
+        print(f"DEBUG: Already answered questions: {sorted(answered_questions)}")
         
-        # Assign responses to next unanswered questions
-        for response_value in responses:
-            # Find next unanswered question
-            for i in range(1, 22):
-                question_id = f"Q{i}A"
-                if question_id not in answered_questions:
-                    # Store this response
-                    dass_response = DASSResponse(
-                        conversation_id=conversation_id,
-                        question_id=question_id,
-                        response_value=response_value,
-                        extracted_from_message_id=message_id
-                    )
-                    db.add(dass_response)
-                    answered_questions.add(question_id)
-                    break
+        # Only store new responses if we found any valid responses
+        if responses:
+            # Assign responses to next unanswered questions
+            stored_count = 0
+            for response_value in responses:
+                # Find next unanswered question
+                for i in range(1, 22):
+                    question_id = f"Q{i}A"
+                    if question_id not in answered_questions:
+                        # Double-check that this question doesn't already exist (prevent duplicates)
+                        existing_check = db.query(DASSResponse).filter(
+                            DASSResponse.conversation_id == conversation_id,
+                            DASSResponse.question_id == question_id
+                        ).first()
+                        
+                        if not existing_check:
+                            # Store this response
+                            dass_response = DASSResponse(
+                                conversation_id=conversation_id,
+                                question_id=question_id,
+                                response_value=response_value,
+                                extracted_from_message_id=message_id
+                            )
+                            db.add(dass_response)
+                            answered_questions.add(question_id)
+                            stored_count += 1
+                            print(f"DEBUG: Stored response {response_value} for {question_id} from message: '{user_message[:50]}...'")
+                        else:
+                            print(f"DEBUG: Question {question_id} already answered, skipping duplicate")
+                        break
+            
+            if stored_count > 0:
+                # Commit the new responses
+                db.commit()
+                print(f"DEBUG: Successfully stored {stored_count} new responses")
+            else:
+                print(f"DEBUG: No new responses stored (all questions already answered)")
+        else:
+            print(f"DEBUG: No valid responses found in message: '{user_message[:50]}...'")
+        
+        # Always commit to ensure any changes are saved
+        db.commit()
     
     def _is_assessment_complete(self, conversation_id: str, db: Session) -> bool:
         """Check if all 21 DASS responses have been collected."""
@@ -379,19 +480,72 @@ class ConversationService:
         return response_count >= 21
     
     def _get_progress_info(self, conversation_id: str, db: Session) -> str:
-        """Get current progress information."""
-        collected = db.query(DASSResponse).filter(
+        """Get current progress information with detailed question tracking."""
+        responses = db.query(DASSResponse).filter(
             DASSResponse.conversation_id == conversation_id
-        ).count()
+        ).order_by(DASSResponse.question_id).all()
         
+        collected = len(responses)
         remaining = 21 - collected
         
         if collected == 0:
-            return "No responses collected yet. Start with the first question."
+            return "🔍 ASSESSMENT STATUS: Starting assessment. 🎯 Ask question Q1A: 'I found it hard to wind down'"
         elif remaining > 0:
-            return f"Collected {collected}/21 responses. Need {remaining} more responses."
+            # Get set of answered questions for fast lookup
+            answered_questions = {r.question_id for r in responses}
+            
+            # Find the next question to ask by checking each question in order
+            next_question_num = None
+            for i in range(1, 22):
+                question_id = f"Q{i}A"
+                if question_id not in answered_questions:
+                    next_question_num = i
+                    break
+            
+            # Map question numbers to their text
+            question_texts = {
+                1: "I found it hard to wind down",
+                2: "I was aware of dryness of my mouth", 
+                3: "I couldn't seem to experience any positive feeling at all",
+                4: "I experienced breathing difficulty (e.g. excessively rapid breathing, breathlessness in the absence of physical exertion)",
+                5: "I found it difficult to work up the initiative to do things",
+                6: "I tended to over-react to situations",
+                7: "I experienced trembling (e.g. in the hands)",
+                8: "I felt that I was using a lot of nervous energy",
+                9: "I was worried about situations in which I might panic and make a fool of myself",
+                10: "I felt that I had nothing to look forward to",
+                11: "I found myself getting agitated",
+                12: "I found it difficult to relax",
+                13: "I felt down-hearted and blue",
+                14: "I was intolerant of anything that kept me from getting on with what I was doing",
+                15: "I felt I was close to panic",
+                16: "I was unable to become enthusiastic about anything",
+                17: "I felt I wasn't worth much as a person",
+                18: "I felt that I was rather touchy",
+                19: "I was aware of the action of my heart in the absence of physical exertion (e.g. sense of heart rate increase, heart missing a beat)",
+                20: "I felt scared without any good reason",
+                21: "I felt that life was meaningless"
+            }
+            
+            # Create a sorted list of answered question numbers for display
+            answered_nums = sorted([int(q[1:-1]) for q in answered_questions])
+            
+            # Find the most recently answered question to help with acknowledgment
+            last_answered_num = max(answered_nums) if answered_nums else 0
+            last_answered_text = question_texts.get(last_answered_num, "Unknown")
+            
+            if next_question_num:
+                next_question_text = question_texts.get(next_question_num, "Unknown question")
+                
+                # Include information about the last answered question for proper acknowledgment
+                if last_answered_num > 0:
+                    return f"🔍 ASSESSMENT STATUS: Collected {collected}/21 responses. ✅ LAST ANSWERED: Q{last_answered_num}A: '{last_answered_text}'. ✅ All answered questions: {answered_nums}. 🎯 NEXT QUESTION TO ASK: Q{next_question_num}A: '{next_question_text}'. ⚠️ IMPORTANT: Acknowledge the user's response to Q{last_answered_num}A first, then ask Q{next_question_num}A."
+                else:
+                    return f"🔍 ASSESSMENT STATUS: Collected {collected}/21 responses. ✅ Answered questions: {answered_nums}. 🎯 NEXT QUESTION TO ASK: Q{next_question_num}A: '{next_question_text}'. ⚠️ IMPORTANT: Do NOT ask questions that are already in the answered list above. ASK ONLY THE NEXT QUESTION SPECIFIED."
+            else:
+                return "🔍 ASSESSMENT STATUS: All 21 responses collected. 🎯 Ready to make prediction."
         else:
-            return "All 21 responses collected. Ready to make prediction."
+            return "🔍 ASSESSMENT STATUS: All 21 responses collected. 🎯 Ready to make prediction."
     
     def _make_dass_prediction(self, conversation_id: str, db: Session) -> Dict[str, Any]:
         """Make DASS prediction using collected responses and store results."""
@@ -491,6 +645,20 @@ class ConversationService:
         summary += "\n\nPlease remember that this is a screening tool and not a diagnosis. If you're experiencing distress, consider speaking with a mental health professional."
         
         return summary
+    
+    def _format_results_context(self, prediction_record: 'Prediction') -> str:
+        """Format prediction results for AI context when discussing completed assessments."""
+        context_parts = []
+        
+        # Add severity levels
+        context_parts.append(f"Depression: {prediction_record.depression_severity}")
+        context_parts.append(f"Anxiety: {prediction_record.anxiety_severity}")
+        context_parts.append(f"Stress: {prediction_record.stress_severity}")
+        
+        # Add model info
+        context_parts.append(f"Model accuracy: {prediction_record.model_accuracy:.2f}")
+        
+        return "; ".join(context_parts)
     
     def _update_conversation_analytics(self, conversation_id: str, db: Session):
         """Update conversation analytics."""

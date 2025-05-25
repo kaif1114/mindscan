@@ -126,10 +126,10 @@ const ResultsPage: React.FC = () => {
             level === "Normal"
               ? "text-green-700"
               : level === "Mild"
-              ? "text-yellow-700"
-              : level === "Moderate"
-              ? "text-orange-700"
-              : "text-red-700"
+                ? "text-yellow-700"
+                : level === "Moderate"
+                  ? "text-orange-700"
+                  : "text-red-700"
           }`}
         >
           {level}
@@ -233,6 +233,17 @@ const ResultsPage: React.FC = () => {
       </div>
 
       <div className="flex flex-wrap gap-4">
+        <button
+          onClick={() => {
+            setCurrentSession(sessionId!);
+            navigate("/");
+          }}
+          className="btn btn-primary flex items-center gap-2"
+        >
+          <MessageCircle size={16} />
+          <span>Continue Conversation</span>
+        </button>
+
         <button
           onClick={() => navigate("/")}
           className="btn btn-outline flex items-center gap-2"

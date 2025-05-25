@@ -1,14 +1,24 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, AlertCircle, Loader2, Brain, MessageCircle } from "lucide-react";
+import {
+  Send,
+  AlertCircle,
+  Loader2,
+  Brain,
+  MessageCircle,
+  CheckCircle,
+  Eye,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import TextareaAutosize from "react-textarea-autosize";
 import { useChatContext } from "../context/ChatContext";
 import { formatDate } from "../utils/helpers";
+import { useNavigate } from "react-router-dom";
 
 const ChatPage: React.FC = () => {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const navigate = useNavigate();
   const {
     currentSession,
     messages,
@@ -181,6 +191,35 @@ const ChatPage: React.FC = () => {
             Dismiss
           </button>
         </div>
+      )}
+
+      {/* Assessment Completed Banner */}
+      {currentSession?.analysis && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-green-50 border border-green-200 rounded-lg mx-4 mt-4 p-3"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-green-700">
+              <CheckCircle size={16} />
+              <span className="text-sm font-medium">
+                Assessment completed! Your results are ready.
+              </span>
+            </div>
+            <button
+              onClick={() => navigate(`/results/${currentSession.id}`)}
+              className="flex items-center gap-1 px-3 py-1 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <Eye size={14} />
+              View Results
+            </button>
+          </div>
+          <p className="text-xs text-green-600 mt-1">
+            You can continue our conversation to discuss your results or ask any
+            questions.
+          </p>
+        </motion.div>
       )}
 
       <div className="flex-1 overflow-y-auto p-4 pb-0">

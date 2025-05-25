@@ -165,6 +165,153 @@ const formatDASSToPrediction = (prediction: DASSPrediction) => {
   };
 };
 
+const convertRawPredictionToDASSPrediction = (
+  rawPrediction: any
+): DASSPrediction => {
+  // Convert raw prediction data from backend to DASSPrediction format
+  if (!rawPrediction || !rawPrediction.predictions) {
+    throw new Error("Invalid prediction data");
+  }
+
+  const predictions = rawPrediction.predictions;
+
+  // Calculate scores (category_index * 7 for DASS-21 scaling)
+  const depressionScore = (predictions.Depression?.category_index || 0) * 7;
+  const anxietyScore = (predictions.Anxiety?.category_index || 0) * 7;
+  const stressScore = (predictions.Stress?.category_index || 0) * 7;
+
+  // Determine if there's a disorder (any score above normal)
+  const hasDisorder =
+    predictions.Depression?.severity !== "Normal" ||
+    predictions.Anxiety?.severity !== "Normal" ||
+    predictions.Stress?.severity !== "Normal";
+
+  // Determine primary disorder type
+  let disorderType = null;
+  if (hasDisorder) {
+    const scores = [
+      {
+        type: "Depression",
+        score: depressionScore,
+        severity: predictions.Depression?.severity,
+      },
+      {
+        type: "Anxiety",
+        score: anxietyScore,
+        severity: predictions.Anxiety?.severity,
+      },
+      {
+        type: "Stress",
+        score: stressScore,
+        severity: predictions.Stress?.severity,
+      },
+    ];
+    const highestScore = scores.reduce((prev, current) =>
+      current.score > prev.score ? current : prev
+    );
+    if (highestScore.severity !== "Normal") {
+      disorderType = highestScore.type;
+    }
+  }
+
+  return {
+    id: `pred-${Date.now()}`, // Generate a temporary ID
+    conversation_id: "", // Will be set by caller
+    depression_score: depressionScore,
+    anxiety_score: anxietyScore,
+    stress_score: stressScore,
+    depression_level: predictions.Depression?.severity || "Normal",
+    anxiety_level: predictions.Anxiety?.severity || "Normal",
+    stress_level: predictions.Stress?.severity || "Normal",
+    has_disorder: hasDisorder,
+    disorder_type: disorderType,
+    confidence: rawPrediction.model_info?.accuracy || 0.8, // Use model accuracy as confidence
+    model_version: rawPrediction.model_info?.model_type || "unknown",
+    created_at: new Date().toISOString(),
+  };
+};
+
+const convertSimplifiedPredictionToDASSPrediction = (
+  simplifiedPrediction: any
+): DASSPrediction => {
+  // Convert simplified prediction format from get_conversation_with_responses
+  if (!simplifiedPrediction) {
+    throw new Error("Invalid prediction data");
+  }
+
+  // Map severity levels to approximate scores
+  const severityToScore = {
+    Normal: 0,
+    Mild: 7,
+    Moderate: 14,
+    Severe: 21,
+    "Extremely Severe": 28,
+  };
+
+  const depressionScore =
+    severityToScore[
+      simplifiedPrediction.depression?.severity as keyof typeof severityToScore
+    ] || 0;
+  const anxietyScore =
+    severityToScore[
+      simplifiedPrediction.anxiety?.severity as keyof typeof severityToScore
+    ] || 0;
+  const stressScore =
+    severityToScore[
+      simplifiedPrediction.stress?.severity as keyof typeof severityToScore
+    ] || 0;
+
+  // Determine if there's a disorder (any score above normal)
+  const hasDisorder =
+    simplifiedPrediction.depression?.severity !== "Normal" ||
+    simplifiedPrediction.anxiety?.severity !== "Normal" ||
+    simplifiedPrediction.stress?.severity !== "Normal";
+
+  // Determine primary disorder type
+  let disorderType = null;
+  if (hasDisorder) {
+    const scores = [
+      {
+        type: "Depression",
+        score: depressionScore,
+        severity: simplifiedPrediction.depression?.severity,
+      },
+      {
+        type: "Anxiety",
+        score: anxietyScore,
+        severity: simplifiedPrediction.anxiety?.severity,
+      },
+      {
+        type: "Stress",
+        score: stressScore,
+        severity: simplifiedPrediction.stress?.severity,
+      },
+    ];
+    const highestScore = scores.reduce((prev, current) =>
+      current.score > prev.score ? current : prev
+    );
+    if (highestScore.severity !== "Normal") {
+      disorderType = highestScore.type;
+    }
+  }
+
+  return {
+    id: `pred-${Date.now()}`, // Generate a temporary ID
+    conversation_id: "", // Will be set by caller
+    depression_score: depressionScore,
+    anxiety_score: anxietyScore,
+    stress_score: stressScore,
+    depression_level: simplifiedPrediction.depression?.severity || "Normal",
+    anxiety_level: simplifiedPrediction.anxiety?.severity || "Normal",
+    stress_level: simplifiedPrediction.stress?.severity || "Normal",
+    has_disorder: hasDisorder,
+    disorder_type: disorderType,
+    confidence: 0.8, // Default confidence since we don't have model info
+    model_version: "unknown",
+    created_at: simplifiedPrediction.timestamp || new Date().toISOString(),
+  };
+};
+
 const convertAPIMessagesToMessages = (
   apiMessages: ConversationMessage[]
 ): Message[] => {
@@ -196,9 +343,40 @@ const convertFullConversationToSession = (
       : "New conversation";
 
   // Get the latest prediction if available
-  const predictions = data.predictions || [];
-  const latestPrediction =
-    predictions.length > 0 ? predictions[predictions.length - 1] : null;
+  // Handle both single prediction object and array of predictions
+  let latestPrediction: DASSPrediction | null = null;
+
+  if (data.predictions) {
+    try {
+      if (Array.isArray(data.predictions)) {
+        // Array format - use the last prediction
+        if (data.predictions.length > 0) {
+          const lastPred = data.predictions[data.predictions.length - 1];
+          latestPrediction = lastPred;
+        }
+      } else {
+        // Check if it's the simplified format from get_conversation_with_responses
+        const predictions = data.predictions as any;
+        if (
+          predictions.depression &&
+          predictions.anxiety &&
+          predictions.stress
+        ) {
+          // Simplified format
+          latestPrediction =
+            convertSimplifiedPredictionToDASSPrediction(predictions);
+          latestPrediction.conversation_id = data.conversation.id;
+        } else {
+          // Raw prediction format
+          latestPrediction = convertRawPredictionToDASSPrediction(predictions);
+          latestPrediction.conversation_id = data.conversation.id;
+        }
+      }
+    } catch (error) {
+      console.error("Error converting prediction data:", error);
+      latestPrediction = null;
+    }
+  }
 
   return {
     id: data.conversation.id,
@@ -421,9 +599,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
         timestamp: new Date(),
       };
 
-      // If assessment is complete, add analysis
+      // If assessment is complete and we have predictions, add analysis
       if (response.is_assessment_complete && response.predictions) {
-        finalSession.analysis = formatDASSToPrediction(response.predictions);
+        const dassPrediction = convertRawPredictionToDASSPrediction(
+          response.predictions
+        );
+        dassPrediction.conversation_id = currentSession.id;
+        finalSession.analysis = formatDASSToPrediction(dassPrediction);
+      }
+      // If session already had analysis, preserve it
+      else if (currentSession.analysis) {
+        finalSession.analysis = currentSession.analysis;
       }
 
       setCurrentSession(finalSession);
@@ -431,10 +617,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
         (prev) => new Map(prev.set(currentSession.id, finalSession))
       );
 
-      // Navigate to results if assessment is complete
-      if (response.is_assessment_complete && response.predictions) {
-        navigate(`/results/${currentSession.id}`);
-      }
+      // Don't automatically navigate to results - let user continue conversation
+      // Users can view results by clicking the results button in the sidebar
     } catch (error) {
       console.error("Failed to send message:", error);
     }
