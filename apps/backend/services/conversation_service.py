@@ -78,7 +78,7 @@ class ConversationService:
             db.commit()
             db.refresh(user_msg)
             
-            self._extract_and_store_dass_responses(conversation_id, user_message, user_msg.id, db)
+            stored_responses_count = self._extract_and_store_dass_responses(conversation_id, user_message, user_msg.id, db)
             
             is_complete = self._is_assessment_complete(conversation_id, db)
             predictions = None
@@ -91,6 +91,23 @@ class ConversationService:
                 predictions = existing_prediction.raw_prediction_data
                 response = self._get_assistant_response(conversation_id, db)
                 
+            elif not is_complete and stored_responses_count == 0:
+                progress_info = self._get_progress_info(conversation_id, db)
+                next_question_marker = "🎯 NEXT QUESTION TO ASK: "
+                if next_question_marker in progress_info:
+                    question_to_ask = progress_info.split(next_question_marker)[1].split(". ⚠️")[0]
+                else:
+                    question_texts = self._get_question_texts()
+                    question_to_ask = question_texts.get(1, "the first question")
+
+                response = f"I'm sorry, but that doesn't seem to be a valid answer. Please respond with 'Never', 'Sometimes', 'Often', or 'Almost Always', or a number from 1 to 4. Let's try again: {question_to_ask}"
+                assistant_msg = Message(
+                    conversation_id=conversation.id,
+                    role="assistant", 
+                    content=response
+                )
+                db.add(assistant_msg)
+
             elif is_complete:
                 try:
                     predictions = self._make_dass_prediction(conversation_id, db)
@@ -367,8 +384,8 @@ class ConversationService:
         answered_questions = {r.question_id for r in existing_responses}
         print(f"DEBUG: Already answered questions: {sorted(answered_questions)}")
         
+        stored_count = 0
         if responses:
-            stored_count = 0
             for response_value in responses:
                 for i in range(1, 22):
                     question_id = f"Q{i}A"
@@ -402,6 +419,7 @@ class ConversationService:
             print(f"DEBUG: No valid responses found in message: '{user_message[:50]}...'")
         
         db.commit()
+        return stored_count
     
     def _is_assessment_complete(self, conversation_id: str, db: Session) -> bool:
         """Check if all 21 DASS responses have been collected."""
@@ -790,5 +808,30 @@ class ConversationService:
             
         finally:
             db.close()
+
+    def _get_question_texts(self) -> Dict[int, str]:
+        return {
+            1: "I found it hard to wind down",
+            2: "I was aware of dryness of my mouth", 
+            3: "I couldn't seem to experience any positive feeling at all",
+            4: "I experienced breathing difficulty (e.g. excessively rapid breathing, breathlessness in the absence of physical exertion)",
+            5: "I found it difficult to work up the initiative to do things",
+            6: "I tended to over-react to situations",
+            7: "I experienced trembling (e.g. in the hands)",
+            8: "I felt that I was using a lot of nervous energy",
+            9: "I was worried about situations in which I might panic and make a fool of myself",
+            10: "I felt that I had nothing to look forward to",
+            11: "I found myself getting agitated",
+            12: "I found it difficult to relax",
+            13: "I felt down-hearted and blue",
+            14: "I was intolerant of anything that kept me from getting on with what I was doing",
+            15: "I felt I was close to panic",
+            16: "I was unable to become enthusiastic about anything",
+            17: "I felt I wasn't worth much as a person",
+            18: "I felt that I was rather touchy",
+            19: "I was aware of the action of my heart in the absence of physical exertion (e.g. sense of heart rate increase, heart missing a beat)",
+            20: "I felt scared without any good reason",
+            21: "I felt that life was meaningless"
+        }
 
 conversation_service = ConversationService() 
